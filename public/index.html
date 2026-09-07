@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Mailscope — Email Verifier</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>✅</text></svg>" />
+<link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+<header class="topbar">
+  <div class="wrap topbar-inner">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <span class="brand-name">Mailscope</span>
+    </div>
+    <div class="status-pill" id="engineStatus" title="Engine status">Checking engine…</div>
+  </div>
+</header>
+
+<main class="wrap">
+  <h1 class="page-title">Verify an address before you send</h1>
+  <p class="page-sub">
+    Syntax, DNS and a live SMTP mailbox probe — so your outreach hits real
+    inboxes instead of your bounce rate.
+  </p>
+
+  <div class="tabs" role="tablist">
+    <button class="tab is-active" role="tab" data-panel="single" aria-selected="true">Single</button>
+    <button class="tab" role="tab" data-panel="bulk" aria-selected="false">Bulk list</button>
+    <button class="tab" role="tab" data-panel="finder" aria-selected="false">Find an address</button>
+  </div>
+
+  <!-- Single verification -->
+  <section class="panel is-active" id="panel-single" role="tabpanel">
+    <form class="card form-row" id="singleForm">
+      <input class="input" id="singleEmail" type="text" placeholder="name@company.com"
+             autocomplete="off" spellcheck="false" required aria-label="Email address" />
+      <button class="btn btn-primary" type="submit">Verify</button>
+    </form>
+    <div id="singleResult" class="result-slot" aria-live="polite"></div>
+  </section>
+
+  <!-- Bulk verification -->
+  <section class="panel" id="panel-bulk" role="tabpanel">
+    <form class="card" id="bulkForm">
+      <label class="label" for="bulkInput">Paste a list, or drop in a CSV column</label>
+      <textarea class="textarea" id="bulkInput" rows="8" spellcheck="false"
+        placeholder="ada@example.com&#10;grace@example.org&#10;Alan Turing &lt;alan@example.net&gt;"></textarea>
+      <div class="form-actions">
+        <label class="file-btn">
+          <input type="file" id="bulkFile" accept=".csv,.txt,.tsv" hidden />
+          <span>Upload file</span>
+        </label>
+        <label class="check">
+          <input type="checkbox" id="bulkSkipSmtp" />
+          <span>Fast mode (skip SMTP)</span>
+        </label>
+        <span class="spacer"></span>
+        <span class="hint" id="bulkCount">0 addresses</span>
+        <button class="btn btn-primary" type="submit">Verify list</button>
+      </div>
+    </form>
+    <div id="bulkResult" class="result-slot" aria-live="polite"></div>
+  </section>
+
+  <!-- Finder -->
+  <section class="panel" id="panel-finder" role="tabpanel">
+    <form class="card" id="finderForm">
+      <label class="label">Who are you trying to reach?</label>
+      <div class="grid-3">
+        <input class="input" id="finderFirst" placeholder="First name" autocomplete="off" required />
+        <input class="input" id="finderLast" placeholder="Last name" autocomplete="off" />
+        <input class="input" id="finderDomain" placeholder="company.com" autocomplete="off" required />
+      </div>
+      <div class="form-actions">
+        <span class="hint">Tests the most common address patterns in order of likelihood.</span>
+        <span class="spacer"></span>
+        <button class="btn btn-primary" type="submit">Find address</button>
+      </div>
+    </form>
+    <div id="finderResult" class="result-slot" aria-live="polite"></div>
+  </section>
+
+  <details class="explainer">
+    <summary>How the verdicts are decided</summary>
+    <dl class="legend">
+      <dt><span class="dot deliverable"></span>Deliverable</dt>
+      <dd>The mail server confirmed the mailbox on a live SMTP probe. Safe to send.</dd>
+      <dt><span class="dot risky"></span>Risky</dt>
+      <dd>It resolves, but something weakens it: an accept-all domain, a shared
+          role inbox, a full mailbox or a disposable provider. Sending may bounce
+          or go unread.</dd>
+      <dt><span class="dot undeliverable"></span>Undeliverable</dt>
+      <dd>Bad syntax, a domain with no mail server, or an explicit rejection.
+          Remove these from your list.</dd>
+      <dt><span class="dot unknown"></span>Unknown</dt>
+      <dd>The provider deferred, blocked the probe, or SMTP is disabled. Retry
+          later before deciding.</dd>
+    </dl>
+  </details>
+</main>
+
+<footer class="wrap foot">
+  <p>Self-hosted. Nothing leaves your server except DNS and SMTP probes.
+     API docs in the <code>README.md</code>.</p>
+</footer>
+
+<script src="/app.js"></script>
+</body>
+</html>
