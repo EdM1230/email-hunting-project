@@ -43,6 +43,20 @@ export function createApp() {
     standardHeaders: true,
     legacyHeaders: false,
     message: { error: 'Rate limit exceeded. Slow down and try again shortly.' },
+    /**
+     * Serverless invocations have no real socket, so `req.ip` is undefined and
+     * the default key generator throws. Prefer the platform's client-IP header
+     * and fall back to a shared bucket, which still caps total throughput.
+     */
+    keyGenerator: (req) =>
+      req.get('x-nf-client-connection-ip') ??
+      req.get('cf-connecting-ip') ??
+      req.get('x-real-ip') ??
+      req.get('x-forwarded-for')?.split(',')[0]?.trim() ??
+      req.ip ??
+      'unknown',
+    // The custom key generator above handles the serverless case correctly.
+    validate: { ip: false, xForwardedForHeader: false },
   });
 
   // Optional shared-secret gate, so a public deployment is not an open relay

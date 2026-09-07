@@ -132,7 +132,12 @@ const EMAIL_RE = /[^\s,;<>"'()[\]]+@[^\s,;<>"'()[\]]+\.[A-Za-z]{2,}/g;
 function countEmails() {
   const found = bulkInput.value.match(EMAIL_RE) || [];
   const unique = new Set(found.map((e) => e.toLowerCase())).size;
-  $('bulkCount').textContent = `${unique} address${unique === 1 ? '' : 'es'}`;
+  const label = $('bulkCount');
+  label.textContent =
+    unique > bulkMaxEmails
+      ? `${unique} addresses — over the ${bulkMaxEmails} limit for one request`
+      : `${unique} address${unique === 1 ? '' : 'es'}`;
+  label.classList.toggle('over-limit', unique > bulkMaxEmails);
 }
 bulkInput.addEventListener('input', countEmails);
 
@@ -295,16 +300,50 @@ $('finderForm').addEventListener('submit', async (event) => {
 });
 
 /* ---------------- engine status ---------------- */
+
+// The cap the server will accept in one bulk request; refreshed from /health.
+let bulkMaxEmails = Infinity;
+
 (async function engineStatus() {
   const pill = $('engineStatus');
   try {
     const health = await api('/api/health');
-    if (health.smtpEnabled) {
+    bulkMaxEmails = health.bulkMaxEmails || Infinity;
+    countEmails();
+
+    if (health.mode === 'upstream') {
+      const ok = health.upstream && health.upstream.reachable;
+      pill.textContent = ok ? 'SMTP probe active (upstream)' : 'Upstream unreachable';
+      pill.title = ok
+        ? 'Mailbox probing is delegated to your upstream verifier.'
+        : `The upstream verifier could not be reached${
+            health.upstream && health.upstream.error ? `: ${health.upstream.error}` : ''
+          }. Mailboxes cannot be confirmed until it is back.`;
+      if (!ok) pill.classList.add('warn');
+    } else if (health.mode === 'full') {
       pill.textContent = 'SMTP probe active';
+      pill.title = 'Mailboxes are confirmed with a live SMTP probe.';
     } else {
       pill.textContent = 'DNS-only mode';
       pill.classList.add('warn');
-      pill.title = 'SMTP verification is disabled, so mailboxes cannot be confirmed.';
+      pill.title = health.serverless
+        ? 'This deployment cannot reach port 25, so mailboxes cannot be confirmed. ' +
+          'Set VERIFY_UPSTREAM_URL to delegate probing — see the README.'
+        : 'SMTP verification is disabled, so mailboxes cannot be confirmed.';
+    }
+
+    // Say so up front when nothing can be confirmed, rather than letting the
+    // user work through a list where every row comes back "unknown".
+    if (health.mode === 'dns-only') {
+      const banner = document.createElement('div');
+      banner.className = 'banner';
+      banner.textContent = health.serverless
+        ? 'Running without SMTP: this host blocks outbound port 25, so addresses ' +
+          'can be checked for syntax, domain and reputation, but mailboxes cannot ' +
+          'be confirmed. See the README to connect an upstream prober.'
+        : 'Running without SMTP: mailboxes cannot be confirmed, so results are ' +
+          'based on syntax, DNS and reputation only.';
+      document.querySelector('.page-sub').after(banner);
     }
   } catch {
     pill.textContent = 'Engine unreachable';

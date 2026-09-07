@@ -7,6 +7,7 @@ before you burn it on an outreach campaign.
 - **Web app** — single check, bulk list with CSV export, and an address finder
 - **JSON API** — drop it into your CRM, enrichment pipeline or sequencer
 - **CLI** — verify a file of leads from your terminal
+- **Deploy anywhere** — a VPS, Docker, or Netlify (with one caveat, below)
 - No third-party service. Your list never leaves your server.
 
 ---
@@ -65,7 +66,7 @@ Where it works:
 | DigitalOcean, Linode / Akamai, Vultr | ⚠️ blocked by default, opened via a support ticket |
 | AWS EC2 | ⚠️ blocked; requires a request form, and a reverse-DNS record |
 | GCP, Azure | ❌ hard block on most tiers |
-| Vercel, Netlify, Heroku, Render, Railway, Fly.io | ❌ blocked, no exception |
+| Vercel, **Netlify**, Heroku, Render, Railway, Fly.io | ❌ blocked, no exception — see [Deploying to Netlify](#deploying-to-netlify) |
 
 Check your host before you trust the results:
 
@@ -96,6 +97,114 @@ accurate over time:
    providers accept every `RCPT TO` regardless, and Microsoft 365 tenants are
    often accept-all. Those come back `risky`/`unknown`, which is the honest
    answer.
+
+---
+
+## Deploying to Netlify
+
+The app ships Netlify-ready: `netlify.toml` publishes `public/` to the CDN and
+runs the Express API as a function at `/api/*`.
+
+```bash
+npm install -g netlify-cli
+netlify init      # link or create a site
+netlify deploy --build --prod
+```
+
+Or connect the repository in the Netlify UI — the build settings are read from
+`netlify.toml`, so there is nothing to fill in.
+
+### What works on Netlify, and what does not
+
+**Netlify Functions run on AWS Lambda, which blocks outbound port 25.** The
+SMTP mailbox probe is the one stage that can confirm a mailbox exists, and it
+cannot run there. This is a platform limit, not a configuration you can talk
+your way around.
+
+So a plain Netlify deploy detects itself as serverless and starts in
+**DNS-only mode**: syntax, typo, disposable, role-account, MX, null-MX and
+parked-domain checks all work, every mailbox comes back `unknown`, and the UI
+says so in a banner rather than quietly serving useless verdicts.
+
+| Feature | Plain Netlify | Netlify + upstream |
+|---------|---------------|--------------------|
+| Syntax, typo suggestions | ✅ | ✅ |
+| Disposable / role / free-provider | ✅ | ✅ |
+| MX, null-MX, parked domain | ✅ | ✅ |
+| **Mailbox confirmed to exist** | ❌ `unknown` | ✅ |
+| **Accept-all detection** | ❌ | ✅ |
+| Address finder | ranked guesses | verified |
+
+### Getting real verification on Netlify
+
+Run this same app on a host that *does* have port 25 open (a €4 Hetzner box is
+plenty) and point the Netlify deployment at it. Netlify serves the UI and API;
+the upstream does the SMTP work.
+
+```
+  browser ──▶ Netlify (CDN + function) ──HTTPS──▶ your box, port 25 open ──▶ mail servers
+                    UI, syntax, DNS                    SMTP probe
+```
+
+**1. On the box with port 25 open**, run the app with a key set:
+
+```bash
+API_KEY=pick-a-long-random-string \
+SMTP_HELO_HOST=probe.yourdomain.com \
+SMTP_FROM_EMAIL=verify@yourdomain.com \
+npm start
+```
+
+Put it behind HTTPS (Caddy or nginx will do), and confirm it works:
+
+```bash
+curl -s https://probe.yourdomain.com/api/health   # expect "mode":"full"
+```
+
+**2. In the Netlify UI**, under Site settings → Environment variables:
+
+| Variable | Value |
+|----------|-------|
+| `VERIFY_UPSTREAM_URL` | `https://probe.yourdomain.com` |
+| `VERIFY_UPSTREAM_KEY` | the same `API_KEY` as above |
+
+Redeploy. `/api/health` should now report `"mode":"upstream"` with
+`"upstream":{"reachable":true}`, and the status pill reads *SMTP probe active
+(upstream)*.
+
+Only requests that actually reach the SMTP stage are forwarded — a malformed
+address, a burner domain or a domain with no MX is settled on Netlify and
+never costs a round trip. If the upstream is down, results degrade to
+`unknown` with the reason attached; they are never fabricated.
+
+### Serverless defaults
+
+Detecting Netlify (or any Lambda runtime) changes two defaults:
+
+| Setting | Self-hosted | Serverless | Why |
+|---------|-------------|------------|-----|
+| `SMTP_ENABLED` | `true` | `false` | Port 25 is blocked; probing would only burn execution time |
+| `BULK_MAX_EMAILS` | `1000` | `100` | Functions are killed at 26s, so large lists must be chunked client-side |
+
+Both are still overridable by setting the variable explicitly.
+
+Two other consequences worth knowing:
+
+- **The cache is per-container.** Results are memoized in memory, so a cold
+  start begins with an empty cache. Nothing breaks; repeat lookups are just
+  slower than on a long-lived server.
+- **Per-host SMTP pacing does not span invocations.** Irrelevant while SMTP is
+  off, and handled by the upstream when one is configured — which is another
+  reason to route probing through a single upstream rather than trying to
+  enable SMTP on Netlify.
+
+### Protect your deployment
+
+A public deployment is a free verification service for anyone who finds it. Set
+`API_KEY` in the Netlify environment to require an `X-API-Key` header on every
+`/api` request except `/api/health`. Note that the bundled web UI does not send
+that header, so use it for API-only deployments, or put the site behind
+Netlify's password protection or an access control add-on.
 
 ---
 
@@ -245,6 +354,9 @@ Every setting is an environment variable; see `.env.example`.
 | `RATE_LIMIT_MAX` | `60` | Requests per window, per IP |
 | `RATE_LIMIT_WINDOW_MS` | `60000` | Rate-limit window |
 | `API_KEY` | *(unset)* | When set, `X-API-Key` is required |
+| `VERIFY_UPSTREAM_URL` | *(unset)* | Delegate SMTP probing to another instance (see [Netlify](#deploying-to-netlify)) |
+| `VERIFY_UPSTREAM_KEY` | *(unset)* | `X-API-Key` sent to that upstream |
+| `VERIFY_UPSTREAM_TIMEOUT_MS` | `30000` / `20000` | Upstream timeout; lower default under serverless |
 
 ### Extending the domain lists
 
@@ -283,7 +395,7 @@ so the status and the score never disagree.
 ## Tests
 
 ```bash
-npm test        # 33 tests
+npm test        # 47 tests
 npm run typecheck
 ```
 
@@ -292,6 +404,14 @@ The SMTP suite runs against a scriptable fake mail server
 greylist, accept-all, policy block, full mailbox, multi-line replies, and
 mail-exchanger failover — is covered without needing port 25. It also asserts
 that the prober never sends `DATA`.
+
+The Netlify suite invokes the real Lambda handler with simulated events,
+covering both path shapes Netlify may send, the serverless defaults, and the
+rate limiter that would otherwise throw when `req.ip` is undefined. The
+upstream suite runs against a stand-in verifier and asserts that delegation
+forwards the API key, skips the round trip for locally-settled addresses, and
+degrades to `unknown` — never to a fabricated verdict — when the upstream is
+unreachable, errors, or returns a malformed payload.
 
 ---
 
@@ -311,9 +431,13 @@ src/
     finder.ts          Address-pattern generation and ranking
     csv.ts             List extraction and CSV export
     cache.ts, pool.ts  TTL cache, bounded-concurrency runner
+    upstream.ts        Delegation to an upstream verifier
   data/domains.ts      Disposable, free, role and typo datasets
+netlify/functions/     Lambda entry point wrapping the Express app
+netlify.toml           Netlify build, routing, bundling and headers
 public/                Web UI (no build step, no framework)
-tests/                 Unit and SMTP integration tests
+tests/                 Unit, SMTP, Netlify and upstream tests
+data/                  Optional user-supplied domain lists
 ```
 
 ---

@@ -1,0 +1,12 @@
+{
+  // Typecheck everything, including the Netlify function and the tests, which
+  // the build config leaves out because they are not compiled into dist/.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": ".",
+    // Tests import source directly by .ts path; tsx resolves this at runtime.
+    "allowImportingTsExtensions": true
+  },
+  "include": ["src/**/*.ts", "tests/**/*.ts", "netlify/**/*.ts"]
+}

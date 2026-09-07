@@ -5,3 +5,7 @@ dist/
 *.log
 .DS_Store
 coverage/
+
+# Local esbuild output used to test the Netlify function
+.fnbuild/
+.netlify/

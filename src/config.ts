@@ -13,6 +13,27 @@ function bool(name: string, fallback: boolean): boolean {
   return ['1', 'true', 'yes', 'on'].includes(raw.trim().toLowerCase());
 }
 
+/**
+ * True when running inside a serverless function (Netlify, AWS Lambda).
+ *
+ * This is not a cosmetic distinction. Lambda-based platforms block outbound
+ * port 25 with no exception, so the SMTP stage cannot work there, and every
+ * probe would simply burn the function's execution time until it timed out.
+ * The defaults below change accordingly.
+ */
+export const isServerless = Boolean(
+  process.env.NETLIFY || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.LAMBDA_TASK_ROOT
+);
+
+/**
+ * Upstream verifier URL, e.g. `https://probe.yourdomain.com`.
+ *
+ * When set, verification is delegated to another instance of this app running
+ * somewhere that *does* have outbound port 25. That is how a serverless
+ * deployment still confirms real mailboxes: this instance serves the UI and
+ * API, and the upstream box does the SMTP work.
+ */
+
 export const config = {
   port: num('PORT', 3000),
 
@@ -29,8 +50,11 @@ export const config = {
    */
   smtpFromEmail: process.env.SMTP_FROM_EMAIL ?? 'verify@localhost',
 
-  /** Disable the SMTP stage entirely and rely on syntax + DNS heuristics. */
-  smtpEnabled: bool('SMTP_ENABLED', true),
+  /**
+   * Disable the SMTP stage entirely and rely on syntax + DNS heuristics.
+   * Defaults to off under serverless, where port 25 is blocked regardless.
+   */
+  smtpEnabled: bool('SMTP_ENABLED', !isServerless),
   smtpPort: num('SMTP_PORT', 25),
   smtpTimeoutMs: num('SMTP_TIMEOUT_MS', 8000),
   /** How many mail exchangers to try before giving up on a domain. */
@@ -44,7 +68,12 @@ export const config = {
 
   /** Parallel verifications inside one bulk request. Keep low: be a good citizen. */
   bulkConcurrency: num('BULK_CONCURRENCY', 5),
-  bulkMaxEmails: num('BULK_MAX_EMAILS', 1000),
+  /**
+   * Cap per bulk request. Serverless functions are killed at a hard wall-clock
+   * limit (26s on Netlify), so a large list must be chunked by the client
+   * rather than accepted and then truncated by a timeout.
+   */
+  bulkMaxEmails: num('BULK_MAX_EMAILS', isServerless ? 100 : 1000),
 
   /** Serialize probes per mail exchanger and pause between them. */
   perHostDelayMs: num('PER_HOST_DELAY_MS', 1200),
@@ -54,6 +83,25 @@ export const config = {
 
   /** When set, every /api request must send `X-API-Key` with this value. */
   apiKey: process.env.API_KEY ?? '',
+
+  // The upstream settings are read per call rather than captured at import.
+  // A serverless container is long-lived, and this lets the prober be pointed
+  // somewhere else without a redeploy.
+
+  /** Delegate verification to an upstream instance that has port 25 open. */
+  get upstreamUrl(): string {
+    return (process.env.VERIFY_UPSTREAM_URL ?? '').trim().replace(/\/+$/, '');
+  },
+  /** `X-API-Key` sent to the upstream verifier. */
+  get upstreamKey(): string {
+    return process.env.VERIFY_UPSTREAM_KEY ?? '';
+  },
+  /** Give up on the upstream well inside the serverless execution limit. */
+  get upstreamTimeoutMs(): number {
+    return num('VERIFY_UPSTREAM_TIMEOUT_MS', isServerless ? 20_000 : 30_000);
+  },
+
+  isServerless,
 } as const;
 
 export type Config = typeof config;

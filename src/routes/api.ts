@@ -6,6 +6,7 @@ import { resolveDomain, resolveMailPolicy } from '../lib/dns.js';
 import { findEmail } from '../lib/finder.js';
 import { cacheStats, verifyEmail } from '../lib/verifier.js';
 import { parseEmailList, toCsv } from '../lib/csv.js';
+import { hasUpstream, pingUpstream } from '../lib/upstream.js';
 import type { VerificationResult } from '../types.js';
 
 export const api = Router();
@@ -55,11 +56,30 @@ function summarize(results: VerificationResult[]) {
   return summary;
 }
 
-api.get('/health', (_req, res) => {
+/**
+ * Report which verification mode is actually in effect, so the UI can tell the
+ * user whether mailboxes can be confirmed at all rather than silently serving
+ * "unknown" for everything.
+ *
+ * `mode` is one of:
+ *   full     - SMTP probing happens in this process
+ *   upstream - SMTP probing is delegated to another instance
+ *   dns-only - no SMTP anywhere; mailboxes cannot be confirmed
+ */
+api.get('/health', async (_req, res) => {
+  const upstream = hasUpstream() ? await pingUpstream() : null;
+  const mode = upstream ? 'upstream' : config.smtpEnabled ? 'full' : 'dns-only';
+
   res.json({
     status: 'ok',
+    mode,
     smtpEnabled: config.smtpEnabled,
+    serverless: config.isServerless,
     catchAllDetection: config.catchAllDetection,
+    ...(upstream
+      ? { upstream: { configured: true, reachable: upstream.reachable, error: upstream.error } }
+      : {}),
+    bulkMaxEmails: config.bulkMaxEmails,
     cache: cacheStats(),
     uptimeSeconds: Math.round(process.uptime()),
   });

@@ -1,0 +1,67 @@
+# Netlify deployment for the Mailscope email verifier.
+#
+# IMPORTANT: Netlify Functions run on AWS Lambda, which blocks outbound port 25.
+# The SMTP mailbox probe therefore cannot run here. Without further setup this
+# deployment does syntax, DNS and reputation checks only, and honestly reports
+# every mailbox as "unknown".
+#
+# To get real mailbox confirmation, run this same app on a host that does have
+# port 25 open and set these environment variables in the Netlify UI:
+#   VERIFY_UPSTREAM_URL = https://probe.yourdomain.com
+#   VERIFY_UPSTREAM_KEY = the API_KEY of that upstream instance
+# See the "Deploying to Netlify" section of README.md.
+
+[build]
+  command = "npm run build"
+  publish = "public"
+
+[functions]
+  directory = "netlify/functions"
+  node_bundler = "esbuild"
+
+  # This package is ESM ("type": "module"), so esbuild emits an ESM bundle.
+  # Express and its middleware are CommonJS, and inlining them into that bundle
+  # breaks their internal `require` calls at runtime ("Dynamic require of
+  # 'http' is not supported"). Keeping them external ships them as real
+  # node_modules, which Node then loads correctly.
+  external_node_modules = [
+    "express",
+    "serverless-http",
+    "compression",
+    "cors",
+    "helmet",
+    "express-rate-limit",
+    "zod",
+    "dotenv",
+  ]
+
+  # Optional user-supplied domain lists, if you add any (see README).
+  included_files = ["data/**"]
+
+# The UI calls /api/*; everything else is served from public/ as static files.
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/api/:splat"
+  status = 200
+  force = true
+
+# Single-page fallback so a refresh on any path still loads the app.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+# The UI is served by Netlify's CDN, not by Express, so helmet's headers never
+# apply to it. These mirror the policy the Express app sets when self-hosted.
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Content-Type-Options = "nosniff"
+    X-Frame-Options = "DENY"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    Content-Security-Policy = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'"
+
+[dev]
+  command = "npm run dev"
+  targetPort = 3000
+  port = 8888

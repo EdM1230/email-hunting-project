@@ -10,6 +10,7 @@ import { TtlCache } from './cache.js';
 import { resolveDomain } from './dns.js';
 import { probeMailbox, type SmtpProbeResult } from './smtp.js';
 import { isRoleAccount, looksGibberish, parseEmail, suggestCorrection } from './syntax.js';
+import { hasUpstream, verifyUpstream } from './upstream.js';
 
 const cache = new TtlCache<VerificationResult>(config.cacheTtlMs, config.cacheMaxEntries);
 
@@ -256,6 +257,38 @@ export async function verifyEmail(
     );
     cache.set(cacheKey, result);
     return result;
+  }
+
+  // Stage 4a - hand the mailbox probe to an upstream instance when one is
+  // configured. Only requests that actually reach the SMTP stage are delegated,
+  // so a bad domain or a burner address still costs nothing but local work.
+  if (!options.skipSmtp && hasUpstream()) {
+    try {
+      const remote = await verifyUpstream(normalized, { fresh: options.fresh });
+      if (!remote || typeof remote.status !== 'string' || typeof remote.score !== 'number') {
+        throw new Error('Upstream returned a malformed result');
+      }
+      const result: VerificationResult = {
+        ...remote,
+        email: input,
+        cached: false,
+        durationMs: Date.now() - startedAt,
+      };
+      cache.set(cacheKey, result);
+      return result;
+    } catch (err) {
+      // An unreachable upstream must degrade to an honest "unknown", never to a
+      // fabricated verdict and never to a failed request.
+      return finalize(
+        input, normalized, localPart, domain, 'smtp_unreachable', checks,
+        {
+          mx: domainInfo.mx,
+          didYouMean,
+          message: err instanceof Error ? err.message : String(err),
+        },
+        startedAt
+      );
+    }
   }
 
   // Stage 4 - SMTP envelope probe, the only stage that confirms a mailbox.
