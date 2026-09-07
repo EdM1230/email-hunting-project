@@ -8,7 +8,8 @@
  * Note the platform limits this runs under:
  *   - outbound port 25 is blocked, so the SMTP stage is off by default and
  *     mailbox confirmation requires VERIFY_UPSTREAM_URL
- *   - execution is capped at 26s, so BULK_MAX_EMAILS defaults lower here
+ *   - execution is capped at a hard wall-clock limit (30s), so
+ *     BULK_MAX_EMAILS defaults lower here
  *   - the process is recycled between invocations, so the result cache is
  *     warm only for the life of one container
  */

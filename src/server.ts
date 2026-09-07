@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express, { type NextFunction, type Request, type Response } from 'express';
@@ -9,9 +10,45 @@ import { config } from './config.js';
 import { loadExternalLists } from './data/load.js';
 import { api } from './routes/api.js';
 
-const here = path.dirname(fileURLToPath(import.meta.url));
-// Serve the UI from the repo root whether we run from src/ (tsx) or dist/.
-const publicDir = path.resolve(here, '..', 'public');
+/**
+ * Locate the web UI without assuming how this module was loaded.
+ *
+ * Bundlers may emit CommonJS even from an ESM source - Netlify's function
+ * bundler does exactly that - and `import.meta.url` is then undefined, which
+ * makes `fileURLToPath` throw at module load and takes the whole app down
+ * before it can serve a single request. So try each strategy in turn and fall
+ * back to the working directory rather than trusting any one of them.
+ */
+function resolvePublicDir(): string {
+  const candidates: string[] = [];
+
+  if (process.env.PUBLIC_DIR) candidates.push(path.resolve(process.env.PUBLIC_DIR));
+
+  // ESM: alongside src/ when run via tsx, or alongside dist/ when compiled.
+  const moduleUrl = import.meta?.url;
+  if (typeof moduleUrl === 'string' && moduleUrl.startsWith('file:')) {
+    try {
+      const here = path.dirname(fileURLToPath(moduleUrl));
+      candidates.push(path.resolve(here, '..', 'public'));
+    } catch {
+      // Unusable module URL; the remaining candidates still apply.
+    }
+  }
+
+  // CommonJS output from a bundler.
+  const dir = typeof __dirname === 'string' ? __dirname : '';
+  if (dir) candidates.push(path.resolve(dir, '..', 'public'));
+
+  candidates.push(path.resolve(process.cwd(), 'public'));
+
+  return (
+    candidates.find((dir) => existsSync(path.join(dir, 'index.html'))) ??
+    candidates[candidates.length - 1] ??
+    'public'
+  );
+}
+
+const publicDir = resolvePublicDir();
 
 export function createApp() {
   const app = express();
@@ -110,8 +147,11 @@ async function main(): Promise<void> {
   });
 }
 
-// Only auto-start when run directly, so tests can import createApp().
-if (process.argv[1] && import.meta.url === `file://${process.argv[1]}`) {
+// Only auto-start when run directly, so tests and bundlers can import
+// createApp() without launching a listener. Guarded the same way as the public
+// directory above, since import.meta is absent in a CommonJS bundle.
+const entryUrl = import.meta?.url;
+if (process.argv[1] && entryUrl === `file://${process.argv[1]}`) {
   main().catch((err) => {
     console.error(err);
     process.exit(1);

@@ -70,7 +70,7 @@ export const config = {
   bulkConcurrency: num('BULK_CONCURRENCY', 5),
   /**
    * Cap per bulk request. Serverless functions are killed at a hard wall-clock
-   * limit (26s on Netlify), so a large list must be chunked by the client
+   * limit (30s on Netlify), so a large list must be chunked by the client
    * rather than accepted and then truncated by a timeout.
    */
   bulkMaxEmails: num('BULK_MAX_EMAILS', isServerless ? 100 : 1000),

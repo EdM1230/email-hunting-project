@@ -177,6 +177,22 @@ address, a burner domain or a domain with no MX is settled on Netlify and
 never costs a round trip. If the upstream is down, results degrade to
 `unknown` with the reason attached; they are never fabricated.
 
+### A build warning you can ignore
+
+Netlify's bundler emits CommonJS even though this package is ESM, so the build
+logs two warnings:
+
+```
+▲ [WARNING] "import.meta" is not available with the "cjs" output format and will be empty
+```
+
+That is expected. The two places that read `import.meta.url` — locating
+`public/` and the run-directly guard — both check for it first and fall back,
+so the CommonJS bundle works. `tests/bundle.test.ts` builds the function as
+CommonJS and invokes it on every test run to keep it that way: an unguarded
+`import.meta.url` throws at module load, which takes the whole function down
+and turns every request into a 502.
+
 ### Serverless defaults
 
 Detecting Netlify (or any Lambda runtime) changes two defaults:
@@ -184,7 +200,7 @@ Detecting Netlify (or any Lambda runtime) changes two defaults:
 | Setting | Self-hosted | Serverless | Why |
 |---------|-------------|------------|-----|
 | `SMTP_ENABLED` | `true` | `false` | Port 25 is blocked; probing would only burn execution time |
-| `BULK_MAX_EMAILS` | `1000` | `100` | Functions are killed at 26s, so large lists must be chunked client-side |
+| `BULK_MAX_EMAILS` | `1000` | `100` | Functions are killed at a hard 30s wall clock, so large lists must be chunked client-side |
 
 Both are still overridable by setting the variable explicitly.
 
@@ -395,7 +411,7 @@ so the status and the score never disagree.
 ## Tests
 
 ```bash
-npm test        # 47 tests
+npm test        # 49 tests
 npm run typecheck
 ```
 
@@ -411,7 +427,10 @@ rate limiter that would otherwise throw when `req.ip` is undefined. The
 upstream suite runs against a stand-in verifier and asserts that delegation
 forwards the API key, skips the round trip for locally-settled addresses, and
 degrades to `unknown` — never to a fabricated verdict — when the upstream is
-unreachable, errors, or returns a malformed payload.
+unreachable, errors, or returns a malformed payload. The bundle suite compiles
+the function to CommonJS the way Netlify does and invokes it, since the rest of
+the suite runs the source as ESM and would not notice a bundle that cannot
+load.
 
 ---
 
@@ -436,7 +455,7 @@ src/
 netlify/functions/     Lambda entry point wrapping the Express app
 netlify.toml           Netlify build, routing, bundling and headers
 public/                Web UI (no build step, no framework)
-tests/                 Unit, SMTP, Netlify and upstream tests
+tests/                 Unit, SMTP, Netlify, upstream and bundle tests
 data/                  Optional user-supplied domain lists
 ```
 
